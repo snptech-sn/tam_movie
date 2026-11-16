@@ -1,0 +1,6 @@
+{
+  "name": "តាមរឿង - Tam MOVIE",
+  "description": "គេហទំព័រកម្សាន្តខ្មែរសម្រាប់ទស្សនាវីដេអូពីឆានែល YouTube តាមរឿង (@tam_movie) និងបង្ហោះរឿង បទចម្រៀង និងព័ត៌មានផ្សេងៗ។",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

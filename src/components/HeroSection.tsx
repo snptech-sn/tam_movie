@@ -1,4 +1,5 @@
 import { ExternalLink, Play } from 'lucide-react';
+import { BUNDLED_COVERS } from '../data/assets';
 import type { ChannelInfo, YouTubeVideo } from '../types';
 import { SafeImage } from './SafeImage';
 
@@ -120,7 +121,7 @@ export function HeroSection({
             ) : (
               <div className="w-full min-h-[280px] lg:h-full rounded-xl overflow-hidden border border-white/10 bg-[#141418] flex items-center justify-center">
                 <SafeImage
-                  src="/src/assets/images/khmer_cinema_story_1794842826365.jpg"
+                  src={BUNDLED_COVERS.cinemaStory}
                   alt="តាមរឿង - Tam MOVIE"
                   className="w-full h-full object-cover opacity-80"
                 />

@@ -6,6 +6,9 @@ import { PostReaderModal } from './components/PostReaderModal';
 import { PostsSection, type PostFilter } from './components/PostsSection';
 import { VideoGallery } from './components/VideoGallery';
 import { VideoTheaterModal } from './components/VideoTheaterModal';
+import { BUNDLED_COVERS } from './data/assets';
+import { STATIC_SEED_POSTS } from './data/seedPosts';
+import tamMovieSnapshot from './data/tamMovieSnapshot.json';
 import type {
   ChannelInfo,
   ChannelPayload,
@@ -16,11 +19,77 @@ import type {
   YouTubeVideo,
 } from './types';
 
+const LOCAL_POSTS_KEY = 'tam_movie_posts_v1';
+
+const snapshotData = tamMovieSnapshot as {
+  channel: ChannelInfo;
+  videos: YouTubeVideo[];
+  playlists: YouTubePlaylist[];
+  playlistVideos: Record<string, YouTubeVideo[]>;
+};
+
+function extractYouTubeIdClient(input?: string): string | undefined {
+  if (!input) return undefined;
+  const trimmed = input.trim();
+  if (/^[a-zA-Z0-9_-]{11}$/.test(trimmed)) return trimmed;
+  try {
+    const u = new URL(trimmed);
+    if (u.hostname.includes('youtu.be')) {
+      const seg = u.pathname.split('/').filter(Boolean)[0];
+      return seg && /^[a-zA-Z0-9_-]{11}$/.test(seg) ? seg : undefined;
+    }
+    const v = u.searchParams.get('v');
+    if (v && /^[a-zA-Z0-9_-]{11}$/.test(v)) return v;
+    const parts = u.pathname.split('/').filter(Boolean);
+    const embedIdx = parts.findIndex((p) => p === 'embed' || p === 'shorts' || p === 'live');
+    if (embedIdx !== -1 && parts[embedIdx + 1]) {
+      return parts[embedIdx + 1].slice(0, 11);
+    }
+  } catch {
+    // ignore invalid URL
+  }
+  return undefined;
+}
+
+function readLocalPosts(): Post[] {
+  try {
+    const raw = window.localStorage.getItem(LOCAL_POSTS_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed;
+    }
+  } catch {
+    // ignore storage errors
+  }
+  return STATIC_SEED_POSTS;
+}
+
+function writeLocalPosts(posts: Post[]) {
+  try {
+    window.localStorage.setItem(LOCAL_POSTS_KEY, JSON.stringify(posts));
+  } catch {
+    // ignore storage errors
+  }
+}
+
+async function fetchJsonIfAvailable<T>(url: string, init?: RequestInit): Promise<T | null> {
+  try {
+    const res = await fetch(url, init);
+    const contentType = res.headers.get('content-type') || '';
+    if (!res.ok || !contentType.includes('application/json')) {
+      return null;
+    }
+    return (await res.json()) as T;
+  } catch {
+    return null;
+  }
+}
+
 export default function App() {
-  const [channel, setChannel] = useState<ChannelInfo | null>(null);
-  const [videos, setVideos] = useState<YouTubeVideo[]>([]);
-  const [playlists, setPlaylists] = useState<YouTubePlaylist[]>([]);
-  const [videosLoading, setVideosLoading] = useState(true);
+  const [channel, setChannel] = useState<ChannelInfo | null>(snapshotData.channel);
+  const [videos, setVideos] = useState<YouTubeVideo[]>(snapshotData.videos || []);
+  const [playlists, setPlaylists] = useState<YouTubePlaylist[]>(snapshotData.playlists || []);
+  const [videosLoading, setVideosLoading] = useState(false);
   const [videosSyncing, setVideosSyncing] = useState(false);
   const [videosError, setVideosError] = useState<string | null>(null);
 
@@ -28,7 +97,7 @@ export default function App() {
   const [playlistVideos, setPlaylistVideos] = useState<YouTubeVideo[]>([]);
   const [playlistLoading, setPlaylistLoading] = useState(false);
 
-  const [posts, setPosts] = useState<Post[]>([]);
+  const [posts, setPosts] = useState<Post[]>(() => readLocalPosts());
   const [postFilter, setPostFilter] = useState<PostFilter>('all');
 
   const [activeVideo, setActiveVideo] = useState<YouTubeVideo | null>(null);
@@ -49,27 +118,23 @@ export default function App() {
   const loadChannel = useCallback(async (forceRefresh = false) => {
     if (forceRefresh) {
       setVideosSyncing(true);
-    } else {
-      setVideosLoading(true);
     }
     setVideosError(null);
-    try {
-      const res = await fetch(`/api/channel${forceRefresh ? '?refresh=1' : ''}`);
-      if (!res.ok) {
-        throw new Error('មិនអាចទាញយកវីដេអូពីឆានែល YouTube @tam_movie បានទេ។');
-      }
-      const data: ChannelPayload = await res.json();
+    const data = await fetchJsonIfAvailable<ChannelPayload>(
+      `./api/channel${forceRefresh ? '?refresh=1' : ''}`
+    );
+    if (data && data.videos?.length) {
       setChannel(data.channel);
-      setVideos(data.videos || []);
+      setVideos(data.videos);
       setPlaylists(data.playlists || []);
-    } catch (err) {
-      setVideosError(
-        err instanceof Error ? err.message : 'មានបញ្ហាក្នុងការទាញយកទិន្នន័យពី YouTube។'
-      );
-    } finally {
-      setVideosLoading(false);
-      setVideosSyncing(false);
+    } else {
+      // Static hosting fallback (GitHub Pages): use bundled snapshot seamlessly
+      setChannel(snapshotData.channel);
+      setVideos(snapshotData.videos || []);
+      setPlaylists(snapshotData.playlists || []);
     }
+    setVideosLoading(false);
+    setVideosSyncing(false);
   }, []);
 
   const handleSelectPlaylist = useCallback(async (playlist: YouTubePlaylist | null) => {
@@ -78,19 +143,22 @@ export default function App() {
       setPlaylistVideos([]);
       return;
     }
-    setPlaylistLoading(true);
-    setPlaylistVideos([]);
-    try {
-      const res = await fetch(`/api/playlists/${playlist.id}`);
-      if (res.ok) {
-        const data: { playlistId: string; videos: YouTubeVideo[] } = await res.json();
-        setPlaylistVideos(data.videos || []);
-      }
-    } catch {
+
+    const cachedStatic = snapshotData.playlistVideos?.[playlist.id];
+    if (cachedStatic?.length) {
+      setPlaylistVideos(cachedStatic);
+    } else {
       setPlaylistVideos([]);
-    } finally {
-      setPlaylistLoading(false);
     }
+
+    setPlaylistLoading(!cachedStatic?.length);
+    const liveData = await fetchJsonIfAvailable<{ playlistId: string; videos: YouTubeVideo[] }>(
+      `./api/playlists/${playlist.id}`
+    );
+    if (liveData?.videos?.length) {
+      setPlaylistVideos(liveData.videos);
+    }
+    setPlaylistLoading(false);
   }, []);
 
   const handlePlayVideo = useCallback(
@@ -103,14 +171,10 @@ export default function App() {
   );
 
   const loadPosts = useCallback(async () => {
-    try {
-      const res = await fetch('/api/posts');
-      if (res.ok) {
-        const data: Post[] = await res.json();
-        setPosts(data);
-      }
-    } catch {
-      // Keep current posts if request fails
+    const data = await fetchJsonIfAvailable<Post[]>('./api/posts');
+    if (data && Array.isArray(data)) {
+      setPosts(data);
+      writeLocalPosts(data);
     }
   }, []);
 
@@ -119,7 +183,6 @@ export default function App() {
     loadPosts();
   }, [loadChannel, loadPosts]);
 
-  // Sync top-bar category anchors (#posts-story, #posts-song, #posts-news) with PostsSection filter
   useEffect(() => {
     const syncHash = () => {
       const hash = window.location.hash;
@@ -146,7 +209,9 @@ export default function App() {
       title: video.title,
       youtubeUrl: video.url,
       coverImage: video.thumbnail,
-      summary: video.description || `ទស្សនា និងចែករំលែកអំពីវីដេអូ «${video.title}» ពីឆានែល តាមរឿង - Tam MOVIE។`,
+      summary:
+        video.description ||
+        `ទស្សនា និងចែករំលែកអំពីវីដេអូ «${video.title}» ពីឆានែល តាមរឿង - Tam MOVIE។`,
     });
     setComposerCategory('story');
     setComposerOpen(true);
@@ -154,25 +219,55 @@ export default function App() {
 
   const handleSavePost = async (draft: PostDraft, editingId?: string) => {
     const method = editingId ? 'PUT' : 'POST';
-    const endpoint = editingId ? `/api/posts/${editingId}` : '/api/posts';
+    const endpoint = editingId ? `./api/posts/${editingId}` : './api/posts';
 
-    const res = await fetch(endpoint, {
+    const apiSaved = await fetchJsonIfAvailable<Post>(endpoint, {
       method,
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(draft),
     });
 
-    if (!res.ok) {
-      const errData = await res.json().catch(() => ({}));
-      throw new Error(errData.error || 'មិនអាចរក្សាទុកមាតិកាបានទេ។');
+    let saved: Post;
+    if (apiSaved) {
+      saved = apiSaved;
+    } else {
+      // Static GitHub Pages fallback using localStorage
+      const ytId = extractYouTubeIdClient(draft.youtubeUrl);
+      const defaultCover = ytId
+        ? `https://i.ytimg.com/vi/${ytId}/hqdefault.jpg`
+        : draft.category === 'song'
+        ? BUNDLED_COVERS.musicVinyl
+        : draft.category === 'news'
+        ? BUNDLED_COVERS.phnomPenh
+        : BUNDLED_COVERS.cinemaStory;
+
+      const existing = editingId ? posts.find((p) => p.id === editingId) : undefined;
+      const wordEstimate = Math.max(1, Math.ceil(draft.content.trim().split(/\s+/).length / 160));
+
+      saved = {
+        id: editingId || `post-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        category: draft.category,
+        title: draft.title.trim(),
+        author: draft.author.trim() || 'អ្នកនិពន្ធសហគមន៍',
+        summary: draft.summary.trim() || draft.content.trim().slice(0, 140),
+        content: draft.content.trim(),
+        coverImage: draft.coverImage.trim() || defaultCover,
+        youtubeUrl: draft.youtubeUrl?.trim() || undefined,
+        youtubeId: ytId,
+        audioUrl: draft.audioUrl?.trim() || undefined,
+        lyrics: draft.lyrics?.trim() || undefined,
+        artist: draft.artist?.trim() || undefined,
+        readTime: draft.category === 'song' ? 'បទចម្រៀង' : `${wordEstimate} នាទី`,
+        likes: existing?.likes ?? 0,
+        createdAt: existing?.createdAt || new Date().toISOString(),
+        updatedAt: existing ? new Date().toISOString() : undefined,
+      };
     }
 
-    const saved: Post = await res.json();
     setPosts((prev) => {
-      if (editingId) {
-        return prev.map((p) => (p.id === saved.id ? saved : p));
-      }
-      return [saved, ...prev];
+      const next = editingId ? prev.map((p) => (p.id === saved.id ? saved : p)) : [saved, ...prev];
+      writeLocalPosts(next);
+      return next;
     });
     if (activePost?.id === saved.id) {
       setActivePost(saved);
@@ -181,19 +276,31 @@ export default function App() {
   };
 
   const handleLikePost = async (id: string) => {
-    const res = await fetch(`/api/posts/${id}/like`, { method: 'POST' });
-    if (!res.ok) return;
-    const updated: Post = await res.json();
-    setPosts((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
-    if (activePost?.id === updated.id) {
-      setActivePost(updated);
+    const apiUpdated = await fetchJsonIfAvailable<Post>(`./api/posts/${id}/like`, {
+      method: 'POST',
+    });
+    setPosts((prev) => {
+      const next = prev.map((p) => {
+        if (p.id !== id) return p;
+        return apiUpdated || { ...p, likes: (p.likes || 0) + 1 };
+      });
+      writeLocalPosts(next);
+      return next;
+    });
+    if (activePost?.id === id) {
+      setActivePost((prev) =>
+        prev ? apiUpdated || { ...prev, likes: (prev.likes || 0) + 1 } : null
+      );
     }
   };
 
   const handleDeletePost = async (id: string) => {
-    const res = await fetch(`/api/posts/${id}`, { method: 'DELETE' });
-    if (!res.ok) return;
-    setPosts((prev) => prev.filter((p) => p.id !== id));
+    await fetchJsonIfAvailable<{ ok: boolean }>(`./api/posts/${id}`, { method: 'DELETE' });
+    setPosts((prev) => {
+      const next = prev.filter((p) => p.id !== id);
+      writeLocalPosts(next);
+      return next;
+    });
     if (activePost?.id === id) {
       setActivePost(null);
     }

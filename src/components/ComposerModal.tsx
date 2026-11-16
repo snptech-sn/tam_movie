@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { X } from 'lucide-react';
+import { BUNDLED_COVERS } from '../data/assets';
 import type { Post, PostCategory, PostDraft } from '../types';
 
 interface ComposerModalProps {
@@ -14,19 +15,19 @@ interface ComposerModalProps {
 const COVER_PRESETS = [
   {
     label: 'រោងមហោស្រពបុរាណ',
-    url: '/src/assets/images/khmer_cinema_story_1794842826365.jpg',
+    url: BUNDLED_COVERS.cinemaStory,
   },
   {
     label: 'ស្ទូឌីយ៉ូតន្ត្រី',
-    url: '/src/assets/images/khmer_music_vinyl_1794842826945.jpg',
+    url: BUNDLED_COVERS.musicVinyl,
   },
   {
     label: 'ភាពយន្ត និងព័ត៌មាន',
-    url: '/src/assets/images/phnom_penh_editorial_1794842826864.jpg',
+    url: BUNDLED_COVERS.phnomPenh,
   },
   {
     label: 'រាត្រីផ្កាឈូក',
-    url: '/src/assets/images/folklore_lotus_tale_1794842827440.jpg',
+    url: BUNDLED_COVERS.folkloreLotus,
   },
 ];
 

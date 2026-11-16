@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Film } from 'lucide-react';
+import { resolveAssetUrl } from '../data/assets';
 
 interface SafeImageProps {
   src?: string;
@@ -10,8 +11,9 @@ interface SafeImageProps {
 
 export function SafeImage({ src, alt, className = '', fallbackTitle }: SafeImageProps) {
   const [failed, setFailed] = useState(false);
+  const resolvedSrc = resolveAssetUrl(src);
 
-  if (!src || failed) {
+  if (!resolvedSrc || failed) {
     return (
       <div
         className={`flex flex-col items-center justify-center bg-gradient-to-br from-[#19191E] via-[#131317] to-[#0E0E11] text-[#A19E95] p-6 text-center ${className}`}
@@ -30,7 +32,7 @@ export function SafeImage({ src, alt, className = '', fallbackTitle }: SafeImage
 
   return (
     <img
-      src={src}
+      src={resolvedSrc}
       alt={alt}
       referrerPolicy="no-referrer"
       onError={() => setFailed(true)}
